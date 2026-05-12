@@ -26,6 +26,7 @@ jobs:
       DEFAULT_GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       COPILOT_CLI_TOKEN: ${{ secrets.COPILOT_CLI_TOKEN }}
       ANALYSIS_WINDOW_DAYS: ${{ inputs.analysis_window_days || '3' }}
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -194,12 +195,14 @@ jobs:
             echo "This report was auto-created by the Malicious Code Scan workflow."
           } > issue-body.md
 
+          # Ensure the security label exists before attaching it
+          gh label create "security" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --description "Security-related findings" \
+            --color "e11d48" 2>/dev/null || true
+
           gh issue create \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${ISSUE_TITLE}" \
             --label "security" \
-            --body-file issue-body.md || \
-          gh issue create \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "${ISSUE_TITLE}" \
             --body-file issue-body.md
