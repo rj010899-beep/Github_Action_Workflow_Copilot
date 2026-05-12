@@ -97,16 +97,6 @@ jobs:
             } > "${PROMPT_FILE}"
           fi
 
-          sed -i \
-            -e "s|\\${{ github.repository }}|${GITHUB_REPOSITORY}|g" \
-            -e "s|\\${{ github.event.workflow_run.id }}|${FAILED_RUN_ID}|g" \
-            -e "s|\\${{ github.event.workflow_run.run_number }}|${FAILED_RUN_NUMBER}|g" \
-            -e "s|\\${{ github.event.workflow_run.conclusion }}|${FAILED_CONCLUSION}|g" \
-            -e "s|\\${{ github.event.workflow_run.html_url }}|${FAILED_RUN_URL}|g" \
-            -e "s|\\${{ github.event.workflow_run.head_sha }}|${FAILED_SHA}|g" \
-            -e "s|\\${{ github.event.workflow_run.event }}|${FAILED_TRIGGER}|g" \
-            "${PROMPT_FILE}"
-
           {
             echo ""
             echo "## Runtime Failure Context"
