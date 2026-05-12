@@ -1,0 +1,205 @@
+name: Malicious Code Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      analysis_window_days:
+        description: "Number of days of git history to analyze"
+        required: false
+        default: "3"
+
+permissions:
+  contents: read
+  issues: write
+  security-events: write
+
+concurrency:
+  group: malicious-code-scan-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    name: Malicious Code Analysis
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DEFAULT_GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      COPILOT_CLI_TOKEN: ${{ secrets.COPILOT_CLI_TOKEN }}
+      ANALYSIS_WINDOW_DAYS: ${{ inputs.analysis_window_days || '3' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Collect recent git changes
+        run: |
+          set -euo pipefail
+
+          git log --since="${ANALYSIS_WINDOW_DAYS} days ago" \
+            --pretty=format: --name-only | sort | uniq | grep -v '^$' > changed-files.txt || true
+
+          git log --since="${ANALYSIS_WINDOW_DAYS} days ago" \
+            --pretty=format:"%h - %an, %ar : %s" > recent-commits.txt || true
+
+          echo "=== Changed files ===" && cat changed-files.txt
+          echo "=== Recent commits ===" && cat recent-commits.txt
+
+          {
+            echo "# Repository context"
+            echo "- Repository: ${GITHUB_REPOSITORY}"
+            echo "- Analysis date: $(date -u +%Y-%m-%d)"
+            echo "- Analysis window: Last ${ANALYSIS_WINDOW_DAYS} days"
+            echo "- Ref: ${GITHUB_REF}"
+            echo "- SHA: ${GITHUB_SHA}"
+            echo ""
+            echo "## Recent commits (last ${ANALYSIS_WINDOW_DAYS} days)"
+            cat recent-commits.txt
+            echo ""
+            echo "## Changed files (last ${ANALYSIS_WINDOW_DAYS} days)"
+            cat changed-files.txt
+            echo ""
+          } > scan-context.txt
+
+          # Append diffs for changed files (capped per file to stay within token limits)
+          while IFS= read -r file; do
+            if [ -f "${file}" ]; then
+              echo "" >> scan-context.txt
+              echo "===== DIFF BEGIN: ${file} =====" >> scan-context.txt
+              git diff --since="${ANALYSIS_WINDOW_DAYS} days ago" HEAD -- "${file}" 2>/dev/null | head -300 >> scan-context.txt || true
+              echo "===== DIFF END: ${file} =====" >> scan-context.txt
+            fi
+          done < changed-files.txt
+
+      - name: Install GitHub Copilot CLI extension
+        run: |
+          set -euo pipefail
+          if gh copilot --help >/dev/null 2>&1; then
+            echo "GitHub CLI has built-in copilot command; skipping extension install."
+          elif gh extension list | awk '{print $1}' | grep -qx 'github/gh-copilot'; then
+            echo "GitHub Copilot extension already installed."
+          else
+            gh extension install github/gh-copilot
+          fi
+
+      - name: Generate malicious code scan report with Copilot
+        run: |
+          set -euo pipefail
+
+          PROMPT_TEMPLATE=.github/Agents/Malicious\ Code\ Scan.md
+          PROMPT_FILE=malicious-code-scan-prompt.txt
+
+          if [ -f "${PROMPT_TEMPLATE}" ]; then
+            cp "${PROMPT_TEMPLATE}" "${PROMPT_FILE}"
+          else
+            {
+              echo "# Daily Malicious Code Scan Agent"
+              echo ""
+              echo "Prompt template file not found: ${PROMPT_TEMPLATE}"
+              echo "Proceed with standard malicious code analysis."
+            } > "${PROMPT_FILE}"
+          fi
+
+          {
+            echo ""
+            echo "## Output Constraints"
+            echo "- Return final markdown security report only."
+            echo "- Do NOT include internal reasoning, tool calls, or investigation transcript."
+            echo "- Do NOT include lines like 'I am checking', 'Read file', 'Run shell', 'List directory', or permission errors."
+            echo "- Respond with threat findings OR confirm no threats found."
+            echo "- Use concise sections: Threat findings (if any), Threat score, Evidence, Recommended actions, Files analyzed summary."
+            echo ""
+            echo "## Runtime Context"
+            cat scan-context.txt
+          } >> "${PROMPT_FILE}"
+
+          COPILOT_ERROR_LOG=scan-copilot-error.log
+          SCAN_SUCCESS=false
+          SCAN_TOKEN_SOURCE="none"
+          PROMPT_INLINE=$(tr '\n' ' ' < "${PROMPT_FILE}" | sed -E 's/[[:space:]]+/ /g')
+          : > "${COPILOT_ERROR_LOG}"
+
+          run_copilot_suggest() {
+            local token="$1"
+            GH_TOKEN="${token}" gh copilot suggest -t gh "${PROMPT_INLINE}" > scan-raw.md 2>"${COPILOT_ERROR_LOG}" && return 0
+            GH_TOKEN="${token}" gh copilot suggest "${PROMPT_INLINE}" > scan-raw.md 2>>"${COPILOT_ERROR_LOG}" && return 0
+            GH_TOKEN="${token}" gh copilot -i "suggest ${PROMPT_INLINE}" > scan-raw.md 2>>"${COPILOT_ERROR_LOG}" && return 0
+            return 1
+          }
+
+          if run_copilot_suggest "${DEFAULT_GH_TOKEN}"; then
+            SCAN_SUCCESS=true
+            SCAN_TOKEN_SOURCE="GITHUB_TOKEN"
+          elif [ -n "${COPILOT_CLI_TOKEN}" ] && run_copilot_suggest "${COPILOT_CLI_TOKEN}"; then
+            SCAN_SUCCESS=true
+            SCAN_TOKEN_SOURCE="COPILOT_CLI_TOKEN"
+          fi
+
+          if [ "${SCAN_SUCCESS}" = true ]; then
+            sed -r 's/\x1B\[[0-9;]*[A-Za-z]//g' scan-raw.md > scan-report.md
+          fi
+
+          if [ ! -s scan-report.md ]; then
+            {
+              echo "## Scan unavailable"
+              echo "Copilot CLI did not return analysis output with either available token path."
+              echo ""
+              echo "Optional secret fallback supported: COPILOT_CLI_TOKEN"
+              echo ""
+              echo "### Copilot CLI error output"
+              if [ -s "${COPILOT_ERROR_LOG}" ]; then
+                sed -n '1,120p' "${COPILOT_ERROR_LOG}"
+              else
+                echo "No stderr output captured from gh copilot suggest."
+              fi
+            } > scan-report.md
+            SCAN_TOKEN_SOURCE="none"
+          fi
+
+          echo "${SCAN_TOKEN_SOURCE}" > scan-token-source.txt
+
+      - name: Create scan report issue
+        run: |
+          set -euo pipefail
+
+          ISSUE_TITLE="[Malicious Code Scan] ${GITHUB_REPOSITORY} - $(date -u +%Y-%m-%d) (${GITHUB_SHA::7})"
+
+          EXISTING_ISSUE_NUMBER=$(gh issue list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --state open \
+            --search "\"${ISSUE_TITLE}\" in:title" \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [ -n "${EXISTING_ISSUE_NUMBER}" ]; then
+            echo "Issue #${EXISTING_ISSUE_NUMBER} already exists for this scan."
+            exit 0
+          fi
+
+          {
+            echo "## Malicious Code Scan Report"
+            echo ""
+            echo "- Repository: ${GITHUB_REPOSITORY}"
+            echo "- Analysis date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- Analysis window: Last ${ANALYSIS_WINDOW_DAYS} days"
+            echo "- Triggered by: ${GITHUB_ACTOR}"
+            echo "- Ref: ${GITHUB_REF}"
+            echo "- SHA: ${GITHUB_SHA}"
+            echo "- Copilot token path used: $(cat scan-token-source.txt)"
+            echo ""
+            cat scan-report.md
+            echo ""
+            echo "---"
+            echo ""
+            echo "This report was auto-created by the Malicious Code Scan workflow."
+          } > issue-body.md
+
+          gh issue create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${ISSUE_TITLE}" \
+            --label "security" \
+            --body-file issue-body.md || \
+          gh issue create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${ISSUE_TITLE}" \
+            --body-file issue-body.md
