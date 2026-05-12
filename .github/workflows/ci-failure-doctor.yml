@@ -1,0 +1,169 @@
+name: CI Failure Doctor
+
+on:
+  workflow_run:
+    workflows:
+      - Angular CI/CD Pipeline
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: ci-failure-doctor-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  diagnose-failure:
+    name: Diagnose Failed CI/CD Run
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DEFAULT_GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      COPILOT_CLI_TOKEN: ${{ secrets.COPILOT_CLI_TOKEN }}
+      FAILED_RUN_ID: ${{ github.event.workflow_run.id }}
+      FAILED_RUN_URL: ${{ github.event.workflow_run.html_url }}
+      FAILED_WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+      FAILED_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      FAILED_SHA: ${{ github.event.workflow_run.head_sha }}
+      FAILED_TRIGGER: ${{ github.event.workflow_run.event }}
+    steps:
+      - name: Download failed workflow logs
+        run: |
+          set -euo pipefail
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${FAILED_RUN_ID}/logs" > failed-run-logs.zip
+
+      - name: Extract and consolidate logs
+        run: |
+          set -euo pipefail
+          mkdir -p failed-run-logs
+          unzip -q failed-run-logs.zip -d failed-run-logs
+
+          {
+            echo "# Workflow failure logs"
+            echo ""
+            echo "Workflow: ${FAILED_WORKFLOW_NAME}"
+            echo "Run ID: ${FAILED_RUN_ID}"
+            echo "Run URL: ${FAILED_RUN_URL}"
+            echo "Branch: ${FAILED_BRANCH}"
+            echo "Commit: ${FAILED_SHA}"
+            echo "Trigger: ${FAILED_TRIGGER}"
+            echo ""
+          } > consolidated-logs.txt
+
+          while IFS= read -r file; do
+            echo "" >> consolidated-logs.txt
+            echo "===== BEGIN ${file} =====" >> consolidated-logs.txt
+            sed -n '1,400p' "${file}" >> consolidated-logs.txt
+            echo "===== END ${file} =====" >> consolidated-logs.txt
+          done < <(find failed-run-logs -type f | sort)
+
+      - name: Install GitHub Copilot CLI extension
+        run: |
+          set -euo pipefail
+          gh extension list | grep -q '^github/gh-copilot[[:space:]]' || gh extension install github/gh-copilot
+
+      - name: Generate CI failure diagnosis with Copilot
+        run: |
+          set -euo pipefail
+
+          LOG_SNIPPET=$(sed -n '1,5000p' consolidated-logs.txt)
+
+          PROMPT_FILE=ci-failure-doctor-prompt.txt
+          {
+            echo "You are CI Failure Doctor."
+            echo "Investigate this failed GitHub Actions CI/CD run and provide:"
+            echo "1) Most likely root cause"
+            echo "2) Supporting evidence from logs"
+            echo "3) Failure category (test/build/lint/dependency/deploy/infra/other)"
+            echo "4) Confidence level (high/medium/low)"
+            echo "5) Actionable remediation steps"
+            echo "6) Pattern detection (is this likely flaky, recurring, or deterministic?)"
+            echo ""
+            echo "Output concise markdown only."
+            echo ""
+            echo "Failed workflow metadata:"
+            echo "- Workflow: ${FAILED_WORKFLOW_NAME}"
+            echo "- Run ID: ${FAILED_RUN_ID}"
+            echo "- Run URL: ${FAILED_RUN_URL}"
+            echo "- Branch: ${FAILED_BRANCH}"
+            echo "- Commit: ${FAILED_SHA}"
+            echo "- Trigger: ${FAILED_TRIGGER}"
+            echo ""
+            echo "Logs:"
+            echo "${LOG_SNIPPET}"
+          } > "${PROMPT_FILE}"
+
+          # Copilot CLI output can contain terminal formatting; remove simple ANSI escapes.
+          COPILOT_SUCCESS=false
+          DIAGNOSIS_TOKEN_SOURCE="none"
+
+          if GH_TOKEN="${DEFAULT_GH_TOKEN}" gh copilot suggest -t github "$(cat "${PROMPT_FILE}")" > diagnosis-raw.md 2>/dev/null; then
+            COPILOT_SUCCESS=true
+            DIAGNOSIS_TOKEN_SOURCE="GITHUB_TOKEN"
+          elif [ -n "${COPILOT_CLI_TOKEN}" ] && GH_TOKEN="${COPILOT_CLI_TOKEN}" gh copilot suggest -t github "$(cat "${PROMPT_FILE}")" > diagnosis-raw.md 2>/dev/null; then
+            COPILOT_SUCCESS=true
+            DIAGNOSIS_TOKEN_SOURCE="COPILOT_CLI_TOKEN"
+          fi
+
+          if [ "${COPILOT_SUCCESS}" = true ]; then
+            sed -r 's/\x1B\[[0-9;]*[A-Za-z]//g' diagnosis-raw.md > diagnosis.md
+          fi
+
+          if [ ! -s diagnosis.md ]; then
+            {
+              echo "## Diagnosis unavailable"
+              echo "Copilot CLI did not return analysis output with either available token path."
+              echo ""
+              echo "Optional secret fallback supported: COPILOT_CLI_TOKEN"
+              echo ""
+              echo "Review run logs manually: ${FAILED_RUN_URL}"
+            } > diagnosis.md
+            DIAGNOSIS_TOKEN_SOURCE="none"
+          fi
+
+          echo "${DIAGNOSIS_TOKEN_SOURCE}" > diagnosis-token-source.txt
+
+      - name: Create diagnostic GitHub issue
+        run: |
+          set -euo pipefail
+
+          ISSUE_TITLE="[CI Failure Doctor] ${FAILED_WORKFLOW_NAME} failed (run #${FAILED_RUN_ID})"
+          EXISTING_ISSUE_NUMBER=$(gh issue list \
+            --state open \
+            --search "\"${ISSUE_TITLE}\" in:title" \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [ -n "${EXISTING_ISSUE_NUMBER}" ]; then
+            echo "Issue #${EXISTING_ISSUE_NUMBER} already exists for this failed run."
+            exit 0
+          fi
+
+          {
+            echo "## CI Failure Doctor Report"
+            echo ""
+            echo "- Workflow: ${FAILED_WORKFLOW_NAME}"
+            echo "- Run ID: ${FAILED_RUN_ID}"
+            echo "- Run URL: ${FAILED_RUN_URL}"
+            echo "- Branch: ${FAILED_BRANCH}"
+            echo "- Commit: ${FAILED_SHA}"
+            echo "- Trigger: ${FAILED_TRIGGER}"
+            echo "- Copilot token path used: $(cat diagnosis-token-source.txt)"
+            echo ""
+            cat diagnosis.md
+            echo ""
+            echo "---"
+            echo ""
+            echo "This issue was auto-created by the CI Failure Doctor workflow."
+          } > issue-body.md
+
+          gh issue create \
+            --title "${ISSUE_TITLE}" \
+            --body-file issue-body.md
