@@ -110,13 +110,16 @@ jobs:
           COPILOT_SUCCESS=false
           DIAGNOSIS_TOKEN_SOURCE="none"
           COPILOT_ERROR_LOG=copilot-error.log
+          PROMPT_INLINE=$(tr '\n' ' ' < "${PROMPT_FILE}" | sed -E 's/[[:space:]]+/ /g')
           : > "${COPILOT_ERROR_LOG}"
 
           run_copilot_suggest() {
             local token="$1"
-            # Newer CLI supports target selection; older CLI rejects -t.
-            GH_TOKEN="${token}" gh copilot suggest -t gh "$(cat "${PROMPT_FILE}")" > diagnosis-raw.md 2>"${COPILOT_ERROR_LOG}" || \
-            GH_TOKEN="${token}" gh copilot suggest "$(cat "${PROMPT_FILE}")" > diagnosis-raw.md 2>>"${COPILOT_ERROR_LOG}"
+            # Newer CLI supports target selection; older variants reject -t or require interactive mode.
+            GH_TOKEN="${token}" gh copilot suggest -t gh "${PROMPT_INLINE}" > diagnosis-raw.md 2>"${COPILOT_ERROR_LOG}" && return 0
+            GH_TOKEN="${token}" gh copilot suggest "${PROMPT_INLINE}" > diagnosis-raw.md 2>>"${COPILOT_ERROR_LOG}" && return 0
+            GH_TOKEN="${token}" gh copilot -i "suggest ${PROMPT_INLINE}" > diagnosis-raw.md 2>>"${COPILOT_ERROR_LOG}" && return 0
+            return 1
           }
 
           if run_copilot_suggest "${DEFAULT_GH_TOKEN}"; then
