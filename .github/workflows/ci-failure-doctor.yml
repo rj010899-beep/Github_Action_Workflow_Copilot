@@ -26,7 +26,9 @@ jobs:
       DEFAULT_GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       COPILOT_CLI_TOKEN: ${{ secrets.COPILOT_CLI_TOKEN }}
       FAILED_RUN_ID: ${{ github.event.workflow_run.id }}
+      FAILED_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
       FAILED_RUN_URL: ${{ github.event.workflow_run.html_url }}
+      FAILED_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
       FAILED_WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
       FAILED_BRANCH: ${{ github.event.workflow_run.head_branch }}
       FAILED_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -81,20 +83,33 @@ jobs:
 
           LOG_SNIPPET=$(sed -n '1,5000p' consolidated-logs.txt)
 
+          PROMPT_TEMPLATE=.github/Agents/CI\ Doctor.md
           PROMPT_FILE=ci-failure-doctor-prompt.txt
+
+          if [ -f "${PROMPT_TEMPLATE}" ]; then
+            cp "${PROMPT_TEMPLATE}" "${PROMPT_FILE}"
+          else
+            {
+              echo "# CI Failure Doctor"
+              echo ""
+              echo "Prompt template file not found: ${PROMPT_TEMPLATE}"
+              echo "Proceed with standard failure diagnosis."
+            } > "${PROMPT_FILE}"
+          fi
+
+          sed -i \
+            -e "s|\\${{ github.repository }}|${GITHUB_REPOSITORY}|g" \
+            -e "s|\\${{ github.event.workflow_run.id }}|${FAILED_RUN_ID}|g" \
+            -e "s|\\${{ github.event.workflow_run.run_number }}|${FAILED_RUN_NUMBER}|g" \
+            -e "s|\\${{ github.event.workflow_run.conclusion }}|${FAILED_CONCLUSION}|g" \
+            -e "s|\\${{ github.event.workflow_run.html_url }}|${FAILED_RUN_URL}|g" \
+            -e "s|\\${{ github.event.workflow_run.head_sha }}|${FAILED_SHA}|g" \
+            -e "s|\\${{ github.event.workflow_run.event }}|${FAILED_TRIGGER}|g" \
+            "${PROMPT_FILE}"
+
           {
-            echo "You are CI Failure Doctor."
-            echo "Investigate this failed GitHub Actions CI/CD run and provide:"
-            echo "1) Most likely root cause"
-            echo "2) Supporting evidence from logs"
-            echo "3) Failure category (test/build/lint/dependency/deploy/infra/other)"
-            echo "4) Confidence level (high/medium/low)"
-            echo "5) Actionable remediation steps"
-            echo "6) Pattern detection (is this likely flaky, recurring, or deterministic?)"
             echo ""
-            echo "Output concise markdown only."
-            echo ""
-            echo "Failed workflow metadata:"
+            echo "## Runtime Failure Context"
             echo "- Workflow: ${FAILED_WORKFLOW_NAME}"
             echo "- Run ID: ${FAILED_RUN_ID}"
             echo "- Run URL: ${FAILED_RUN_URL}"
@@ -102,9 +117,9 @@ jobs:
             echo "- Commit: ${FAILED_SHA}"
             echo "- Trigger: ${FAILED_TRIGGER}"
             echo ""
-            echo "Logs:"
+            echo "## Logs"
             echo "${LOG_SNIPPET}"
-          } > "${PROMPT_FILE}"
+          } >> "${PROMPT_FILE}"
 
           # Copilot CLI output can contain terminal formatting; remove simple ANSI escapes.
           COPILOT_SUCCESS=false
