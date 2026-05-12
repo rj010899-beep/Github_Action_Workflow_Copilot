@@ -142,6 +142,7 @@ jobs:
 
           ISSUE_TITLE="[CI Failure Doctor] ${FAILED_WORKFLOW_NAME} failed (run #${FAILED_RUN_ID})"
           EXISTING_ISSUE_NUMBER=$(gh issue list \
+            --repo "${GITHUB_REPOSITORY}" \
             --state open \
             --search "\"${ISSUE_TITLE}\" in:title" \
             --json number \
@@ -171,5 +172,6 @@ jobs:
           } > issue-body.md
 
           gh issue create \
+            --repo "${GITHUB_REPOSITORY}" \
             --title "${ISSUE_TITLE}" \
             --body-file issue-body.md
