@@ -67,7 +67,13 @@ jobs:
       - name: Install GitHub Copilot CLI extension
         run: |
           set -euo pipefail
-          gh extension list | grep -q '^github/gh-copilot[[:space:]]' || gh extension install github/gh-copilot
+          if gh copilot --help >/dev/null 2>&1; then
+            echo "GitHub CLI has built-in copilot command; skipping extension install."
+          elif gh extension list | awk '{print $1}' | grep -qx 'github/gh-copilot'; then
+            echo "GitHub Copilot extension already installed."
+          else
+            gh extension install github/gh-copilot
+          fi
 
       - name: Generate CI failure diagnosis with Copilot
         run: |
