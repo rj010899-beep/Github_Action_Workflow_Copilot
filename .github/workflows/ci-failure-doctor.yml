@@ -109,11 +109,13 @@ jobs:
           # Copilot CLI output can contain terminal formatting; remove simple ANSI escapes.
           COPILOT_SUCCESS=false
           DIAGNOSIS_TOKEN_SOURCE="none"
+          COPILOT_ERROR_LOG=copilot-error.log
+          : > "${COPILOT_ERROR_LOG}"
 
-          if GH_TOKEN="${DEFAULT_GH_TOKEN}" gh copilot suggest -t github "$(cat "${PROMPT_FILE}")" > diagnosis-raw.md 2>/dev/null; then
+          if GH_TOKEN="${DEFAULT_GH_TOKEN}" gh copilot suggest -t gh "$(cat "${PROMPT_FILE}")" > diagnosis-raw.md 2>"${COPILOT_ERROR_LOG}"; then
             COPILOT_SUCCESS=true
             DIAGNOSIS_TOKEN_SOURCE="GITHUB_TOKEN"
-          elif [ -n "${COPILOT_CLI_TOKEN}" ] && GH_TOKEN="${COPILOT_CLI_TOKEN}" gh copilot suggest -t github "$(cat "${PROMPT_FILE}")" > diagnosis-raw.md 2>/dev/null; then
+          elif [ -n "${COPILOT_CLI_TOKEN}" ] && GH_TOKEN="${COPILOT_CLI_TOKEN}" gh copilot suggest -t gh "$(cat "${PROMPT_FILE}")" > diagnosis-raw.md 2>>"${COPILOT_ERROR_LOG}"; then
             COPILOT_SUCCESS=true
             DIAGNOSIS_TOKEN_SOURCE="COPILOT_CLI_TOKEN"
           fi
@@ -128,6 +130,14 @@ jobs:
               echo "Copilot CLI did not return analysis output with either available token path."
               echo ""
               echo "Optional secret fallback supported: COPILOT_CLI_TOKEN"
+              echo "Expected command target for this workflow: gh"
+              echo ""
+              echo "### Copilot CLI error output"
+              if [ -s "${COPILOT_ERROR_LOG}" ]; then
+                sed -n '1,120p' "${COPILOT_ERROR_LOG}"
+              else
+                echo "No stderr output captured from gh copilot suggest."
+              fi
               echo ""
               echo "Review run logs manually: ${FAILED_RUN_URL}"
             } > diagnosis.md
