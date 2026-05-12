@@ -99,6 +99,12 @@ jobs:
 
           {
             echo ""
+            echo "## Output Constraints"
+            echo "- Return final markdown report only."
+            echo "- Do NOT include internal reasoning, tool calls, MCP logs, or step-by-step investigation transcript."
+            echo "- Do NOT include lines like 'I am checking', 'Read file', 'Run shell', 'List directory', or permission errors."
+            echo "- Use concise sections: Most likely root cause, Supporting evidence from logs, Failure category, Confidence level, Actionable remediation steps, Pattern detection."
+            echo ""
             echo "## Runtime Failure Context"
             echo "- Workflow: ${FAILED_WORKFLOW_NAME}"
             echo "- Run ID: ${FAILED_RUN_ID}"
