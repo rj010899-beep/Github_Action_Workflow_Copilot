@@ -104,11 +104,12 @@ jobs:
           {
             echo ""
             echo "## Output Constraints"
-            echo "- Return final markdown security report only."
-            echo "- Do NOT include internal reasoning, tool calls, or investigation transcript."
-            echo "- Do NOT include lines like 'I am checking', 'Read file', 'Run shell', 'List directory', or permission errors."
-            echo "- Respond with threat findings OR confirm no threats found."
-            echo "- Use concise sections: Threat findings (if any), Threat score, Evidence, Recommended actions, Files analyzed summary."
+            echo "- Return final markdown security report ONLY."
+            echo "- Do NOT include internal reasoning, tool calls, MCP logs, grep output, or step-by-step investigation transcript."
+            echo "- Do NOT include any lines starting with ●, ✗, ✓, or containing 'Search', 'Read', 'Run shell', 'List directory', 'Permission denied', 'lines found', or 'lines read'."
+            echo "- Do NOT include file-read summaries, shell command echoes, or agent action logs of any kind."
+            echo "- Respond ONLY with the final threat findings section OR a clean confirmation that no threats were found."
+            echo "- Use exactly these concise sections: Threat Findings (if any), Threat Score, Evidence, Recommended Actions, Files Analyzed Summary."
             echo ""
             echo "## Runtime Context"
             cat scan-context.txt
