@@ -112,10 +112,17 @@ jobs:
           COPILOT_ERROR_LOG=copilot-error.log
           : > "${COPILOT_ERROR_LOG}"
 
-          if GH_TOKEN="${DEFAULT_GH_TOKEN}" gh copilot suggest -t gh "$(cat "${PROMPT_FILE}")" > diagnosis-raw.md 2>"${COPILOT_ERROR_LOG}"; then
+          run_copilot_suggest() {
+            local token="$1"
+            # Newer CLI supports target selection; older CLI rejects -t.
+            GH_TOKEN="${token}" gh copilot suggest -t gh "$(cat "${PROMPT_FILE}")" > diagnosis-raw.md 2>"${COPILOT_ERROR_LOG}" || \
+            GH_TOKEN="${token}" gh copilot suggest "$(cat "${PROMPT_FILE}")" > diagnosis-raw.md 2>>"${COPILOT_ERROR_LOG}"
+          }
+
+          if run_copilot_suggest "${DEFAULT_GH_TOKEN}"; then
             COPILOT_SUCCESS=true
             DIAGNOSIS_TOKEN_SOURCE="GITHUB_TOKEN"
-          elif [ -n "${COPILOT_CLI_TOKEN}" ] && GH_TOKEN="${COPILOT_CLI_TOKEN}" gh copilot suggest -t gh "$(cat "${PROMPT_FILE}")" > diagnosis-raw.md 2>>"${COPILOT_ERROR_LOG}"; then
+          elif [ -n "${COPILOT_CLI_TOKEN}" ] && run_copilot_suggest "${COPILOT_CLI_TOKEN}"; then
             COPILOT_SUCCESS=true
             DIAGNOSIS_TOKEN_SOURCE="COPILOT_CLI_TOKEN"
           fi
