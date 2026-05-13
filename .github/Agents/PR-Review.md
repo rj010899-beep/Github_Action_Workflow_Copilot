@@ -1,33 +1,3 @@
----
-description: Comprehensive pull request reviewer that analyzes code quality, security vulnerabilities, and project standards
-on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-  pull_request_review_comment:
-    types: [created]
-  issue_comment:
-    types: [created]
-  workflow_dispatch:
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-tools:
-  github:
-    toolsets: [default, repos]
-safe-outputs:
-  add-comment:
-    max: 5
-  add-labels:
-    allowed: [security, bug, breaking-change, needs-review, enhancement, documentation, performance, code-quality]
-    max: 5
-  update-pull-request:
-    max: 2
-  create-issue:
-    max: 1
-  noop:
----
-
 # PR Review Agent
 
 You are an **expert code reviewer** specializing in security, code quality, and best practices. Your role is to provide thorough, constructive feedback on pull requests to help maintain high code standards.
