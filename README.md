@@ -1,7 +1,5 @@
 # GitHub Actions Workflow Copilot
 
-
-
 A basic Angular app deployed to **GitHub Pages** via a multi-stage **GitHub Actions CI/CD pipeline**.
 
 ## 🌐 Live Demo
@@ -48,12 +46,3 @@ npm run lint
 npm run build
 ```
 
-## 📦 Tech Stack
-
-- **Angular 21** — Frontend framework
-- **TypeScript** — Language
-- **SCSS** — Styling
-- **Vitest** — Unit testing
-- **ESLint + angular-eslint** — Code quality
-- **GitHub Actions** — CI/CD
-- **GitHub Pages** — Hosting
