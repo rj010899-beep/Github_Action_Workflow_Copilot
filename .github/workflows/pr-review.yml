@@ -205,6 +205,8 @@ jobs:
 
       - name: Post Result In PR Issue Thread
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REVIEW_SUMMARY: ${{ steps.review.outputs.summary }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -212,7 +214,7 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const marker = '<!-- pr-review-agent-comment -->';
-            const summary = JSON.parse(`${{ toJSON(steps.review.outputs.summary) }}`);
+            const summary = process.env.REVIEW_SUMMARY || '## PR Review Agent Error\n\nNo review summary was generated.';
             const body = `${marker}\n${summary}`;
 
             const comments = await github.paginate(github.rest.issues.listComments, {
