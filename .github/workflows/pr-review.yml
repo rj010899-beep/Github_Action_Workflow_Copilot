@@ -1,0 +1,157 @@
+name: PR Review Agent
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review_comment:
+    types: [created]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  pr-review:
+    name: Review Pull Request
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request) ||
+      (github.event_name == 'pull_request_review_comment')
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref || github.head_ref }}
+
+      - name: Get PR Details
+        id: pr-details
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let prNumber;
+            
+            if (context.eventName === 'pull_request') {
+              prNumber = context.payload.pull_request.number;
+            } else if (context.eventName === 'issue_comment') {
+              prNumber = context.payload.issue.number;
+            } else if (context.eventName === 'pull_request_review_comment') {
+              prNumber = context.payload.pull_request.number;
+            }
+            
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            
+            core.setOutput('pr-number', prNumber);
+            core.setOutput('pr-title', pr.title);
+            core.setOutput('pr-author', pr.user.login);
+            core.setOutput('pr-draft', pr.draft);
+            core.setOutput('files-changed', files.length);
+            core.setOutput('base-ref', pr.base.ref);
+            core.setOutput('head-sha', pr.head.sha);
+            
+            return {
+              number: prNumber,
+              title: pr.title,
+              author: pr.user.login,
+              draft: pr.draft,
+              filesChanged: files.length
+            };
+
+      - name: Check Activation Conditions
+        id: check-activation
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const eventName = context.eventName;
+            
+            // For comment events, check if agent should respond
+            if (eventName === 'issue_comment' || eventName === 'pull_request_review_comment') {
+              const comment = context.payload.comment.body.toLowerCase();
+              const keywords = ['review this', 'check this', 'security issue', '@pr-review'];
+              const mentioned = context.payload.comment.body.includes(context.payload.repository.owner.login);
+              
+              const shouldRespond = mentioned || keywords.some(k => comment.includes(k));
+              
+              if (!shouldRespond) {
+                core.setOutput('skip', 'true');
+                core.info('Comment does not require PR review - skipping');
+                return;
+              }
+            }
+            
+            core.setOutput('skip', 'false');
+
+      - name: Run PR Review Agent
+        if: steps.check-activation.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Read the PR Review Agent instructions
+            const agentPath = path.join(process.env.GITHUB_WORKSPACE, '.github/Agents/PR-Review.md');
+            const agentInstructions = fs.readFileSync(agentPath, 'utf8');
+            
+            core.info('PR Review Agent would be triggered here with GitHub Copilot');
+            core.info(`Agent file: ${agentPath}`);
+            core.info(`PR Number: ${{ steps.pr-details.outputs.pr-number }}`);
+            core.info(`Files Changed: ${{ steps.pr-details.outputs.files-changed }}`);
+            
+            // Note: This is a placeholder for actual GitHub Copilot integration
+            // In a real implementation, this would invoke the Copilot agent
+            // with the instructions from the PR-Review.md file
+            
+            core.info('To enable this agent, configure GitHub Copilot for your repository');
+
+      - name: Post Review Summary
+        if: steps.check-activation.outputs.skip != 'true' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ steps.pr-details.outputs.pr-number }};
+            
+            // This is a placeholder comment
+            // The actual review would be performed by GitHub Copilot
+            const comment = `## 🤖 PR Review Agent
+            
+            This PR has been queued for automated review.
+            
+            **Review Configuration:**
+            - Security Analysis: ✅
+            - Code Quality Checks: ✅
+            - Breaking Change Detection: ✅
+            - Performance Review: ✅
+            
+            *Note: Configure GitHub Copilot to enable full automated reviews.*`;
+            
+            // Only post in workflow_dispatch mode for testing
+            if (context.eventName === 'workflow_dispatch') {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: comment
+              });
+            }
