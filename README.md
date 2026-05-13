@@ -1,5 +1,7 @@
 # GitHub Actions Workflow Copilot
 
+
+
 A basic Angular app deployed to **GitHub Pages** via a multi-stage **GitHub Actions CI/CD pipeline**.
 
 ## 🌐 Live Demo
